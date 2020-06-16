@@ -82,18 +82,45 @@ public class FolderUploadSync {
         //     }
         // }
     }
-    private static void sendFiles(Drive driveService){
+    
+    private static void sendFiles(Drive driveService) throws IOException, GeneralSecurityException{
+        //File.listFiles() https://www.tutorialspoint.com/how-to-get-list-of-all-files-folders-from-a-folder-in-java#:~:text=The%20ListFiles()%20method,file%2Fdirectory%20in%20a%20folder.
+        //Create folder and get id - > https://developers.google.com/drive/api/v3/folder
+        //TODO -> CREATE FOLDER , INSERT INTO FOLDER , LIST FILES IN FOLDER -> INSERTION AND DELETION 
+        //TODO-> REUPLOAD BY DATE MODIFIED    
         File fileMetadata = new File();
         fileMetadata.setName("photo.jpg");
-        java.io.File filePath = new java.io.File("../../../build/resources/main/zaragoza.jpg");
+        String i = "";
+        java.io.File filePath = new java.io.File(FolderUploadSync.class.getResource("/zaragoza.jpg").getPath());
         try{
             FileContent mediaContent = new FileContent("image/jpeg", filePath);
             File file = driveService.files().create(fileMetadata, mediaContent)
             .setFields("id")
             .execute();
             System.out.println("File ID: " + file.getId());
+            i = file.getId();
+            
         }catch(Exception e){
             System.out.println(e.getMessage());
+        }finally{
+            // // Print the names and IDs for up to 10 files.
+            FileList result = driveService.files().list()
+                    .setQ(" name = 'photo.jpg'")
+                    
+                    .setFields("*")
+                    .execute();
+            List<File> files = result.getFiles();
+            if (files == null || files.isEmpty()) {
+                System.out.println("No files found.");
+            } else {
+                System.out.println("Files:");
+                for (File file : files) {
+                    //https://developers.google.com/drive/api/v2/reference/files/update
+                    //Sync by modified time. deletion + insertion by simply checking listFiles
+                    System.out.printf("%s (%s)\n", file.getModifiedTime(), file.getId());
+                }
+            }
         }
+
     }
 }

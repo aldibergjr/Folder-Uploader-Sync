@@ -17,6 +17,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.nio.file.Files;
 import java.security.GeneralSecurityException;
 import java.util.Collections;
 import java.util.List;
@@ -63,64 +64,96 @@ public class FolderUploadSync {
         Drive service = new Drive.Builder(HTTP_TRANSPORT, JSON_FACTORY, getCredentials(HTTP_TRANSPORT))
                 .setApplicationName(APPLICATION_NAME)
                 .build();
-
-        sendFiles(service);
-
         
-        // // Print the names and IDs for up to 10 files.
-        // FileList result = service.files().list()
-        //         .setPageSize(10)
-        //         .setFields("nextPageToken, files(id, name)")
-        //         .execute();
-        // List<File> files = result.getFiles();
-        // if (files == null || files.isEmpty()) {
-        //     System.out.println("No files found.");
-        // } else {
-        //     System.out.println("Files:");
-        //     for (File file : files) {
-        //         System.out.printf("%s (%s)\n", file.getName(), file.getId());
-        //     }
-        // }
+        getFolder(service);
     }
-    
-    private static void sendFiles(Drive driveService) throws IOException, GeneralSecurityException{
-        //File.listFiles() https://www.tutorialspoint.com/how-to-get-list-of-all-files-folders-from-a-folder-in-java#:~:text=The%20ListFiles()%20method,file%2Fdirectory%20in%20a%20folder.
-        //Create folder and get id - > https://developers.google.com/drive/api/v3/folder
-        //TODO -> CREATE FOLDER , INSERT INTO FOLDER , LIST FILES IN FOLDER -> INSERTION AND DELETION 
-        //TODO-> REUPLOAD BY DATE MODIFIED    
-        File fileMetadata = new File();
-        fileMetadata.setName("photo.jpg");
-        String i = "";
-        java.io.File filePath = new java.io.File(FolderUploadSync.class.getResource("/zaragoza.jpg").getPath());
-        try{
-            FileContent mediaContent = new FileContent("image/jpeg", filePath);
-            File file = driveService.files().create(fileMetadata, mediaContent)
-            .setFields("id")
-            .execute();
-            System.out.println("File ID: " + file.getId());
-            i = file.getId();
-            
-        }catch(Exception e){
-            System.out.println(e.getMessage());
-        }finally{
-            // // Print the names and IDs for up to 10 files.
-            FileList result = driveService.files().list()
-                    .setQ(" name = 'photo.jpg'")
-                    
-                    .setFields("*")
+    private static File checkFolder(Drive driveService, String path) throws IOException, GeneralSecurityException{
+        java.io.File auxFile = new java.io.File(path);
+        FileList searchFolder = driveService.files().list()
+                .setQ("name = '"+auxFile.getName()+ "'")
+                .execute();
+        List<File> folders = searchFolder.getFiles();
+        if(folders.isEmpty())
+            return null;
+        else
+            return folders.get(0);
+    }
+    private static void getFolder(Drive driveService) throws IOException, GeneralSecurityException{
+        String path = "C:/Users/Berg/SyncFolder";
+        java.io.File directoryPath = new java.io.File(path);
+        File folder = checkFolder(driveService, path);
+        if(directoryPath.exists())
+        {
+            String folderName = directoryPath.getName();
+            if(folder == null)
+            {
+                File folderMetaData = new File();
+                folderMetaData.setName(folderName);
+                folderMetaData.setMimeType("application/vnd.google-apps.folder");
+        
+                File file = driveService.files().create(folderMetaData)
+                    .setFields("id")
                     .execute();
-            List<File> files = result.getFiles();
-            if (files == null || files.isEmpty()) {
-                System.out.println("No files found.");
-            } else {
-                System.out.println("Files:");
-                for (File file : files) {
+                String folderId = file.getId();
+                
+                System.out.println("Pasta criada para ser acompanhada no drive");
+                sendFiles(driveService, directoryPath.listFiles(), folderId);
+            }else{
+                //Auto sync ? 
+                doSync(driveService, folder, path);
+                System.out.println("A pasta já existe");
+            }
+            
+        }else{
+            System.out.println("Diretório inválido");
+        }
+    }
+    private static void sendFiles(Drive driveService, java.io.File[] contents, String parentFolder) throws IOException, GeneralSecurityException{
+        //Get all files in folder 
+        for(java.io.File fileMetadata : contents){
+           // FileContent mediaContent = new FileContent(fileMetadata., file)
+           File fileMetaFile = new File();
+           fileMetaFile.setName(fileMetadata.getName());
+           //Get mime/type
+           FileContent mediaContent = new FileContent(Files.probeContentType(fileMetadata.toPath()),  fileMetadata);
+           fileMetaFile.setParents(Collections.singletonList(parentFolder));
+           File file = driveService.files().create(fileMetaFile, mediaContent).setFields("id, parents").execute();
+           System.out.println("Sent file : " + file.getName());
+        }
+    }
+    public static void doSync(Drive driveService, File folderRef, String path) throws IOException, GeneralSecurityException{
+        java.io.File localFolder = new java.io.File(path);
+        String parentId = folderRef.getId();
+        FileList result = driveService.files().list().setQ("parents='"+parentId+"'").execute();
+        List<File> filesDrive = result.getFiles();
+        java.io.File[] filesLocal = localFolder.listFiles();
+        boolean[] filesSync = new boolean[filesDrive.size()]; 
+        //Look for changes -> 
+        
+        for(java.io.File local : filesLocal){
+            boolean found = false;
+            int auxI = 0;
+            for(File remote : filesDrive){
+                if(remote.getName().equals(local.getName())){
                     //https://developers.google.com/drive/api/v2/reference/files/update
-                    //Sync by modified time. deletion + insertion by simply checking listFiles
-                    System.out.printf("%s (%s)\n", file.getModifiedTime(), file.getId());
+                    System.out.println("checking for file modification for file:  " + remote.getName());
+                    found = true;
+                    filesSync[auxI] = true;
+                    break;
                 }
+                ++auxI;
+            }
+            if(!found){
+                System.out.println("New file to be added: " + local.getName());
+                //filesSync[auxI] = true;
+            }
+           
+        }
+        for (int i = 0; i < filesSync.length; i++) {
+            if(!filesSync[i]){
+                File removed = filesDrive.get(i);
+                System.out.println("removed/renamed file : " + removed.getName());
             }
         }
-
     }
 }

@@ -19,6 +19,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.security.GeneralSecurityException;
+import java.text.SimpleDateFormat;
 import java.util.Collections;
 import java.util.List;
 
@@ -67,10 +68,12 @@ public class FolderUploadSync {
         
         getFolder(service);
     }
+
     private static File checkFolder(Drive driveService, String path) throws IOException, GeneralSecurityException{
         java.io.File auxFile = new java.io.File(path);
         FileList searchFolder = driveService.files().list()
                 .setQ("name = '"+auxFile.getName()+ "'")
+                
                 .execute();
         List<File> folders = searchFolder.getFiles();
         if(folders.isEmpty())
@@ -78,6 +81,7 @@ public class FolderUploadSync {
         else
             return folders.get(0);
     }
+
     private static void getFolder(Drive driveService) throws IOException, GeneralSecurityException{
         String path = "C:/Users/Berg/SyncFolder";
         java.io.File directoryPath = new java.io.File(path);
@@ -108,6 +112,7 @@ public class FolderUploadSync {
             System.out.println("Diretório inválido");
         }
     }
+
     private static void sendFiles(Drive driveService, java.io.File[] contents, String parentFolder) throws IOException, GeneralSecurityException{
         //Get all files in folder 
         for(java.io.File fileMetadata : contents){
@@ -121,10 +126,11 @@ public class FolderUploadSync {
            System.out.println("Sent file : " + file.getName());
         }
     }
+
     public static void doSync(Drive driveService, File folderRef, String path) throws IOException, GeneralSecurityException{
         java.io.File localFolder = new java.io.File(path);
         String parentId = folderRef.getId();
-        FileList result = driveService.files().list().setQ("parents='"+parentId+"'").execute();
+        FileList result = driveService.files().list().setQ("parents='"+parentId+"'").setFields("*").execute();
         List<File> filesDrive = result.getFiles();
         java.io.File[] filesLocal = localFolder.listFiles();
         boolean[] filesSync = new boolean[filesDrive.size()]; 
@@ -136,24 +142,55 @@ public class FolderUploadSync {
             for(File remote : filesDrive){
                 if(remote.getName().equals(local.getName())){
                     //https://developers.google.com/drive/api/v2/reference/files/update
+                    
                     System.out.println("checking for file modification for file:  " + remote.getName());
                     found = true;
+                   
+                    long localModif = local.lastModified();
+                    long remoteModif =  remote.getModifiedTime().getValue();
+                    System.out.println("last local modified : " + localModif + " last remote modified: " + remoteModif);
+                    if(localModif > remoteModif)
+                    {
+                        System.out.println("Changes for current file found");
+                        updateFile(remote, local, driveService);
+                    }
+                        
                     filesSync[auxI] = true;
                     break;
                 }
                 ++auxI;
             }
             if(!found){
+                uploadFile(local, driveService, parentId);
                 System.out.println("New file to be added: " + local.getName());
-                //filesSync[auxI] = true;
             }
            
         }
         for (int i = 0; i < filesSync.length; i++) {
             if(!filesSync[i]){
                 File removed = filesDrive.get(i);
+                deleteFile(removed, driveService);
                 System.out.println("removed/renamed file : " + removed.getName());
             }
         }
+    }
+
+    public static void uploadFile(java.io.File local, Drive driveService, String folderId)throws IOException, GeneralSecurityException{
+        File newFile = new File();
+        newFile.setName(local.getName());
+        newFile.setParents(Collections.singletonList(folderId));
+        FileContent newContent = new FileContent(Files.probeContentType(local.toPath()),  local);
+        driveService.files().create(newFile, newContent).setFields("id, parents").execute();
+    }
+    public static void deleteFile(File remote, Drive driveService) throws IOException, GeneralSecurityException{
+        driveService.files().delete(remote.getId()).execute();
+    }
+    public static void updateFile(File remote, java.io.File local, Drive driveService) throws IOException, GeneralSecurityException{
+        File newFile = new File();
+        newFile.setName(local.getName());
+        //newFile.setParents(remote.getParents());
+        FileContent newContent = new FileContent(Files.probeContentType(local.toPath()),  local);
+        File updated = driveService.files().update(remote.getId(), newFile, newContent).execute();
+
     }
 }
